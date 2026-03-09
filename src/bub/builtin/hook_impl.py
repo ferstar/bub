@@ -30,6 +30,7 @@ Before ending the run, you MUST determine whether a response needs to be sent to
 When responding to a channel message, you MUST:
 1. Identify the channel from the message metadata (e.g., `$telegram`, `$discord`)
 2. Send the message as instructed by the channel skill (e.g., `telegram` skill for `$telegram` channel)
+3. Prefer explicit channel tools over generic shell commands whenever channel tools are available
 </response_instruct>
 <context_contract>
 Excessively long context may cause model call failures. In this case, you MAY use tape.info to the token usage and you SHOULD use tape.handoff tool to shorten the length of the retrieved history.
@@ -60,7 +61,7 @@ class BuiltinImpl:
         lifespan = field_of(message, "lifespan")
         if lifespan is not None:
             await lifespan.__aenter__()
-        state = {"session_id": session_id, "_runtime_agent": self.agent}
+        state = {"session_id": session_id, "_runtime_agent": self.agent, "_runtime_message": message}
         if context := field_of(message, "context_str"):
             state["context"] = context
         return state
@@ -110,6 +111,27 @@ class BuiltinImpl:
         # Read the content of AGENTS.md under workspace
         return DEFAULT_SYSTEM_PROMPT + "\n\n" + self._read_agents_file(state)
 
+    @staticmethod
+    def _format_error(error: Exception) -> str:
+        parts: list[str] = []
+        seen: set[int] = set()
+        current: Exception | None = error
+
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            text = str(current).strip() or current.__class__.__name__
+            parts.append(text)
+            next_error = getattr(current, "cause", None)
+            if not isinstance(next_error, Exception):
+                next_error = current.__cause__ or current.__context__
+            current = next_error if isinstance(next_error, Exception) else None
+
+        if not parts:
+            return error.__class__.__name__
+        if len(parts) == 1:
+            return parts[0]
+        return " <- ".join(parts)
+
     @hookimpl
     def provide_channels(self, message_handler: MessageHandler) -> list[Channel]:
         from bub.channels.cli import CliChannel
@@ -122,12 +144,13 @@ class BuiltinImpl:
 
     @hookimpl
     async def on_error(self, stage: str, error: Exception, message: Envelope | None) -> None:
+        logger.error("session.run.error stage={} error={}", stage, self._format_error(error))
         if message is not None:
             outbound = ChannelMessage(
                 session_id=field_of(message, "session_id", "unknown"),
                 channel=field_of(message, "channel", "default"),
                 chat_id=field_of(message, "chat_id", "default"),
-                content=f"An error occurred at stage '{stage}': {error}",
+                content=f"An error occurred at stage '{stage}': {self._format_error(error)}",
                 kind="error",
             )
             await self.framework._hook_runtime.call_many("dispatch_outbound", message=outbound)
@@ -148,6 +171,8 @@ class BuiltinImpl:
         state: State,
         model_output: str,
     ) -> list[ChannelMessage]:
+        if not model_output:
+            return []
         outbound = ChannelMessage(
             session_id=session_id,
             channel=field_of(message, "channel", "default"),

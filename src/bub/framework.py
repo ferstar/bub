@@ -174,6 +174,8 @@ class BubFramework:
             outbounds.extend(unpack_batch(batch))
         if outbounds:
             return outbounds
+        if state.get("_channel_response_sent"):
+            return []
 
         fallback: dict[str, Any] = {
             "content": model_output,

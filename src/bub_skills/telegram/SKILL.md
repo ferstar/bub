@@ -27,11 +27,12 @@ Collect these before execution:
 
 ## Execution Policy
 
-1. If handling a direct user message in Telegram and `message_id` is known, send a reply message (`--reply-to`).
-2. If source metadata says sender is a bot (`sender_is_bot=true`), do not use reply mode, but send a normal message and prefix content with `@<sender_username>` (or the provided source username).
-3. For long-running tasks, optionally send one progress message, then edit that same message for final status.
-4. For multi-line text, pass the content via heredoc command substitution instead of embedding raw line breaks in quoted strings.
-5. Avoid emitting HTML tags in message content; use Markdown for formatting instead.
+1. Prefer the built-in tools `telegram_send` and `telegram_edit` over shell commands.
+2. Do not use `bash`, `curl`, or the fallback scripts for normal Telegram sends when these tools are available.
+3. If handling a direct user message in Telegram and `message_id` is known, `telegram_send` will reply to that message by default.
+4. If source metadata says sender is a bot (`sender_is_bot=true`), `telegram_send` will avoid reply mode and prefix with `@<sender_username>` by default.
+5. For long-running tasks, send progress with `final=false`, then send or edit the final user-visible response with `final=true`.
+6. Avoid emitting HTML tags in message content.
 
 ## Active Response Policy
 
@@ -64,7 +65,15 @@ When the inbound Telegram message is voice:
 When an inbound Telegram message warrants acknowledgment but does not merit a full reply, use a Telegram reaction as the response.
 But when any explanation or details are needed, use a normal reply instead.
 
-## Command Templates
+## Preferred Tool Calls
+
+- `telegram_send(message="...", final=True)`
+- `telegram_send(message="working...", final=False)`
+- `telegram_edit(text="done", message_id=123, final=True)`
+
+Use explicit `chat_id` when sending outside the current Telegram session.
+
+## Shell Fallback
 
 Paths are relative to this skill directory.
 

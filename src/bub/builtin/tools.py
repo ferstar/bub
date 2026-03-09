@@ -3,12 +3,17 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, TypedDict, cast
 
 from republic import ToolContext
+from telegram import Bot
+from telegram.error import BadRequest
 
+from bub.channels.telegram import TelegramSettings
+from bub.envelope import content_of, field_of
 from bub.skills import discover_skills
 from bub.tools import tool
+from bub.types import Envelope
 
 if TYPE_CHECKING:
     from bub.builtin.agent import Agent
@@ -18,10 +23,87 @@ DEFAULT_HEADERS = {"accept": "text/markdown"}
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 10
 
 
+class TelegramMetadata(TypedDict, total=False):
+    chat_id: str | int
+    message_id: int
+    sender_is_bot: bool
+    username: str
+
+
 def _get_agent(context: ToolContext) -> Agent:
     if "_runtime_agent" not in context.state:
         raise RuntimeError("no runtime agent found in tool context")
     return cast("Agent", context.state["_runtime_agent"])
+
+
+def _runtime_message(context: ToolContext) -> Envelope | None:
+    message = context.state.get("_runtime_message")
+    return cast("Envelope | None", message)
+
+
+def _runtime_telegram_metadata(context: ToolContext) -> TelegramMetadata:
+    message = _runtime_message(context)
+    if message is None or field_of(message, "channel") != "telegram":
+        return {}
+    raw = content_of(message)
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return cast("TelegramMetadata", data) if isinstance(data, dict) else {}
+
+
+def _mark_channel_response(context: ToolContext, *, final: bool) -> None:
+    if final:
+        context.state["_channel_response_sent"] = True
+
+
+def _telegram_bot() -> Bot:
+    settings = TelegramSettings()
+    if not settings.token:
+        raise RuntimeError("BUB_TELEGRAM_TOKEN is required for telegram tools")
+    return Bot(token=settings.token)
+
+
+def _resolve_telegram_chat_id(context: ToolContext, chat_id: str | None) -> str:
+    metadata = _runtime_telegram_metadata(context)
+    resolved_chat_id = chat_id or (str(metadata["chat_id"]) if "chat_id" in metadata else None)
+    if not resolved_chat_id:
+        raise RuntimeError("chat_id is required when not running inside a Telegram session")
+    return resolved_chat_id
+
+
+def _telegram_defaults(context: ToolContext) -> tuple[str | None, int | None, str | None]:
+    metadata = _runtime_telegram_metadata(context)
+    reply_to: int | None = None
+    mention_username: str | None = None
+    if metadata.get("sender_is_bot"):
+        username = metadata.get("username")
+        if isinstance(username, str) and username.strip():
+            mention_username = username.strip()
+    else:
+        message_id = metadata.get("message_id")
+        if isinstance(message_id, int):
+            reply_to = message_id
+    resolved_chat_id = str(metadata["chat_id"]) if "chat_id" in metadata else None
+    return resolved_chat_id, reply_to, mention_username
+
+
+def _telegram_result(
+    *,
+    action: str,
+    chat_id: int | str,
+    message_id: int,
+    final: bool,
+) -> dict[str, object]:
+    return {
+        "ok": True,
+        "channel": "telegram",
+        "action": action,
+        "chat_id": str(chat_id),
+        "message_id": message_id,
+        "final": final,
+    }
 
 
 @tool(context=True)
@@ -44,6 +126,58 @@ async def bash(
         message = stderr_text or stdout_text or f"exit={completed.returncode}"
         raise RuntimeError(f"exit={completed.returncode}: {message}")
     return stdout_text or "(no output)"
+
+
+@tool(context=True, name="telegram.send")
+async def telegram_send(
+    message: str,
+    chat_id: str | None = None,
+    reply_to_message_id: int | None = None,
+    mention_username: str | None = None,
+    final: bool = True,
+    *,
+    context: ToolContext,
+) -> dict[str, object]:
+    """Send a Telegram message. Defaults to replying in the current Telegram chat when available."""
+    _, default_reply_to, default_mention = _telegram_defaults(context)
+    resolved_chat_id = _resolve_telegram_chat_id(context, chat_id)
+    resolved_reply_to = reply_to_message_id if reply_to_message_id is not None else default_reply_to
+    resolved_mention = mention_username if mention_username is not None else default_mention
+    text = f"@{resolved_mention} {message}" if resolved_mention else message
+
+    bot = _telegram_bot()
+    try:
+        sent = await bot.send_message(
+            chat_id=resolved_chat_id,
+            text=text,
+            reply_to_message_id=resolved_reply_to,
+        )
+    except BadRequest:
+        if reply_to_message_id is None and resolved_reply_to is not None:
+            sent = await bot.send_message(chat_id=resolved_chat_id, text=text)
+        else:
+            raise
+
+    _mark_channel_response(context, final=final)
+    return _telegram_result(action="send", chat_id=sent.chat_id, message_id=sent.message_id, final=final)
+
+
+@tool(context=True, name="telegram.edit")
+async def telegram_edit(
+    text: str,
+    message_id: int,
+    chat_id: str | None = None,
+    final: bool = True,
+    *,
+    context: ToolContext,
+) -> dict[str, object]:
+    """Edit an existing Telegram message."""
+    resolved_chat_id = _resolve_telegram_chat_id(context, chat_id)
+
+    bot = _telegram_bot()
+    message_obj = await bot.edit_message_text(chat_id=resolved_chat_id, message_id=message_id, text=text)
+    _mark_channel_response(context, final=final)
+    return _telegram_result(action="edit", chat_id=message_obj.chat_id, message_id=message_obj.message_id, final=final)
 
 
 @tool(context=True, name="fs.read")

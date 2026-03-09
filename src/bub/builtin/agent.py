@@ -29,6 +29,7 @@ from bub.utils import workspace_from_state
 CONTINUE_PROMPT = "Continue the task or respond to the channel."
 DEFAULT_BUB_HEADERS = {"HTTP-Referer": "https://bub.build/", "X-Title": "Bub"}
 HINT_RE = re.compile(r"\$([A-Za-z0-9_.-]+)")
+TRANSIENT_TAPE_STATE_KEYS = frozenset({"_channel_response_sent"})
 
 
 class Agent:
@@ -52,12 +53,16 @@ class Agent:
         if not stripped:
             return "error: empty prompt"
         tape = self.tapes.session_tape(session_id, workspace_from_state(state))
+        self._clear_transient_tape_state(tape.context.state)
         tape.context.state.update(state)
-        async with self.tapes.fork_tape(tape.name):
-            await self.tapes.ensure_bootstrap_anchor(tape.name)
-            if stripped.startswith(","):
-                return await self._run_command(tape=tape, line=stripped)
-            return await self._agent_loop(tape=tape, prompt=stripped)
+        try:
+            async with self.tapes.fork_tape(tape.name):
+                await self.tapes.ensure_bootstrap_anchor(tape.name)
+                if stripped.startswith(","):
+                    return await self._run_command(tape=tape, line=stripped)
+                return await self._agent_loop(tape=tape, prompt=stripped)
+        finally:
+            self._clear_transient_tape_state(tape.context.state)
 
     async def _run_command(self, tape: Tape, *, line: str) -> str:
         line = line[1:].strip()
@@ -137,6 +142,19 @@ class Agent:
                 )
                 return outcome.text
             if outcome.kind == "continue":
+                if tape.context.state.get("_channel_response_sent"):
+                    await self.tapes.append_event(
+                        tape.name,
+                        "loop.step",
+                        {
+                            "step": step,
+                            "elapsed_ms": elapsed_ms,
+                            "status": "done",
+                            "reason": "channel_response_sent",
+                            "date": datetime.now(UTC).isoformat(),
+                        },
+                    )
+                    return ""
                 if "context" in tape.context.state:
                     next_prompt = f"{CONTINUE_PROMPT} [context: {tape.context.state['context']}]"
                 else:
@@ -194,6 +212,11 @@ class Agent:
         if skills_prompt := self._load_skills_prompt(prompt, workspace):
             blocks.append(skills_prompt)
         return "\n\n".join(blocks)
+
+    @staticmethod
+    def _clear_transient_tape_state(state: State) -> None:
+        for key in TRANSIENT_TAPE_STATE_KEYS:
+            state.pop(key, None)
 
 
 @dataclass(frozen=True)

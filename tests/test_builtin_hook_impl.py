@@ -194,6 +194,30 @@ async def test_on_error_dispatches_outbound_message(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_on_error_includes_cause_chain_in_outbound_message(tmp_path: Path) -> None:
+    framework, impl, _ = _build_impl(tmp_path)
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    async def call_many(name: str, **kwargs: object) -> list[object]:
+        calls.append((name, kwargs))
+        return []
+
+    framework._hook_runtime.call_many = call_many  # type: ignore[method-assign]
+
+    inner = RuntimeError("upstream 502")
+    outer = RuntimeError("temporary: openai:gpt-5.4: LLM call failed after retries")
+    outer.__cause__ = inner
+
+    await impl.on_error(stage="turn", error=outer, message={"channel": "cli", "chat_id": "room"})
+
+    outbound = calls[0][1]["message"]
+    assert outbound.content == (
+        "An error occurred at stage 'turn': "
+        "temporary: openai:gpt-5.4: LLM call failed after retries <- upstream 502"
+    )
+
+
+@pytest.mark.asyncio
 async def test_dispatch_outbound_uses_framework_router(tmp_path: Path) -> None:
     framework, impl, _ = _build_impl(tmp_path)
     dispatched: list[object] = []
@@ -209,6 +233,27 @@ async def test_dispatch_outbound_uses_framework_router(tmp_path: Path) -> None:
 
     assert result is True
     assert dispatched == [outbound]
+
+
+@pytest.mark.asyncio
+async def test_collect_outbounds_skips_fallback_after_channel_response_sent(tmp_path: Path) -> None:
+    framework, _, _ = _build_impl(tmp_path)
+
+    async def call_many(name: str, **kwargs: object) -> list[object]:
+        if name == "render_outbound":
+            return []
+        return []
+
+    framework._hook_runtime.call_many = call_many  # type: ignore[method-assign]
+
+    outbounds = await framework._collect_outbounds(
+        {"channel": "telegram", "chat_id": "room"},
+        "session",
+        {"_channel_response_sent": True},
+        "",
+    )
+
+    assert outbounds == []
 
 
 def test_render_outbound_preserves_message_metadata(tmp_path: Path) -> None:
@@ -229,6 +274,32 @@ def test_render_outbound_preserves_message_metadata(tmp_path: Path) -> None:
     assert outbound.output_channel == "cli"
     assert outbound.kind == "command"
     assert outbound.content == "result"
+
+
+def test_render_outbound_skips_empty_message_after_channel_response_sent(tmp_path: Path) -> None:
+    _, impl, _ = _build_impl(tmp_path)
+
+    rendered = impl.render_outbound(
+        message={"channel": "telegram", "chat_id": "room", "kind": "normal", "output_channel": "null"},
+        session_id="session",
+        state={"_channel_response_sent": True},
+        model_output="",
+    )
+
+    assert rendered == []
+
+
+def test_render_outbound_skips_empty_message_without_channel_flag(tmp_path: Path) -> None:
+    _, impl, _ = _build_impl(tmp_path)
+
+    rendered = impl.render_outbound(
+        message={"channel": "telegram", "chat_id": "room", "kind": "normal", "output_channel": "null"},
+        session_id="session",
+        state={},
+        model_output="",
+    )
+
+    assert rendered == []
 
 
 def test_provide_tape_store_uses_agent_home_directory(tmp_path: Path) -> None:
