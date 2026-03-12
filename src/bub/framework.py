@@ -173,20 +173,36 @@ class BubFramework:
         outbounds: list[Envelope] = []
         for batch in batches:
             outbounds.extend(unpack_batch(batch))
-        if outbounds:
-            return outbounds
+        if not outbounds:
+            fallback: dict[str, Any] = {
+                "content": model_output,
+                "session_id": session_id,
+            }
+            channel = field_of(message, "channel")
+            chat_id = field_of(message, "chat_id")
+            if channel is not None:
+                fallback["channel"] = channel
+            if chat_id is not None:
+                fallback["chat_id"] = chat_id
+            outbounds = [fallback]
 
-        fallback: dict[str, Any] = {
-            "content": model_output,
-            "session_id": session_id,
-        }
-        channel = field_of(message, "channel")
-        chat_id = field_of(message, "chat_id")
-        if channel is not None:
-            fallback["channel"] = channel
-        if chat_id is not None:
-            fallback["chat_id"] = chat_id
-        return [fallback]
+        final_outbounds: list[Envelope] = []
+        for outbound in outbounds:
+            current: Envelope | None = outbound
+            for result in await self._hook_runtime.call_many(
+                "apply_outbound_policy",
+                message=message,
+                session_id=session_id,
+                state=state,
+                outbound=current,
+            ):
+                if result is None:
+                    current = None
+                    break
+                current = result
+            if current is not None:
+                final_outbounds.append(current)
+        return final_outbounds
 
     def get_channels(self, message_handler: MessageHandler) -> dict[str, Channel]:
         channels: dict[str, Channel] = {}

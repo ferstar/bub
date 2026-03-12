@@ -67,6 +67,17 @@ class BubHookSpecs:
         raise NotImplementedError
 
     @hookspec
+    def apply_outbound_policy(
+        self,
+        message: Envelope,
+        session_id: str,
+        state: State,
+        outbound: Envelope,
+    ) -> Envelope | None:
+        """Apply outbound policy to a rendered outbound candidate."""
+        raise NotImplementedError
+
+    @hookspec
     def dispatch_outbound(self, message: Envelope) -> bool:
         """Dispatch one outbound message to external channel(s)."""
         raise NotImplementedError

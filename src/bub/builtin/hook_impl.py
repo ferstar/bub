@@ -163,6 +163,28 @@ class BuiltinImpl:
         return await self.framework.dispatch_via_router(message)
 
     @hookimpl
+    def apply_outbound_policy(
+        self,
+        message: Envelope,
+        session_id: str,
+        state: State,
+        outbound: Envelope,
+    ) -> Envelope | None:
+        del session_id
+        channel = field_of(message, "channel", "default")
+        output_channel = field_of(outbound, "output_channel", field_of(outbound, "channel"))
+
+        if channel == "telegram":
+            if state.get("_channel_response_sent"):
+                return None
+            if output_channel == "null":
+                if isinstance(outbound, dict):
+                    return {**outbound, "output_channel": "telegram"}
+                return outbound.model_copy(update={"output_channel": "telegram"})
+
+        return outbound
+
+    @hookimpl
     def render_outbound(
         self,
         message: Envelope,
@@ -170,24 +192,16 @@ class BuiltinImpl:
         state: State,
         model_output: str,
     ) -> list[ChannelMessage]:
+        del state
         if not model_output:
             return []
 
-        channel = field_of(message, "channel", "default")
-        output_channel = field_of(message, "output_channel", "default")
-
-        if channel == "telegram":
-            if state.get("_channel_response_sent"):
-                return []
-            if output_channel == "null":
-                output_channel = "telegram"
-
         outbound = ChannelMessage(
             session_id=session_id,
-            channel=channel,
+            channel=field_of(message, "channel", "default"),
             chat_id=field_of(message, "chat_id", "default"),
             content=model_output,
-            output_channel=output_channel,
+            output_channel=field_of(message, "output_channel", "default"),
             kind=field_of(message, "kind", "normal"),
         )
         return [outbound]

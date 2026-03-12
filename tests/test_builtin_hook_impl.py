@@ -241,31 +241,30 @@ def test_provide_tape_store_uses_agent_home_directory(tmp_path: Path) -> None:
     assert store._directory == tmp_path / "tapes"
 
 
-def test_render_outbound_skips_telegram_fallback_when_channel_response_already_sent(tmp_path: Path) -> None:
+def test_apply_outbound_policy_skips_telegram_when_channel_response_already_sent(tmp_path: Path) -> None:
     _, impl, _ = _build_impl(tmp_path)
 
-    rendered = impl.render_outbound(
+    result = impl.apply_outbound_policy(
         message={"channel": "telegram", "chat_id": "room", "output_channel": "null"},
         session_id="session",
         state={"_channel_response_sent": True},
-        model_output="result",
+        outbound={"channel": "telegram", "chat_id": "room", "output_channel": "null", "content": "result"},
     )
 
-    assert rendered == []
+    assert result is None
 
 
-def test_render_outbound_uses_telegram_fallback_when_no_channel_response_sent(tmp_path: Path) -> None:
+def test_apply_outbound_policy_uses_telegram_fallback_when_no_channel_response_sent(tmp_path: Path) -> None:
     _, impl, _ = _build_impl(tmp_path)
 
-    rendered = impl.render_outbound(
+    result = impl.apply_outbound_policy(
         message={"channel": "telegram", "chat_id": "room", "output_channel": "null"},
         session_id="session",
         state={},
-        model_output="result",
+        outbound={"channel": "telegram", "chat_id": "room", "output_channel": "null", "content": "result"},
     )
 
-    assert len(rendered) == 1
-    outbound = rendered[0]
-    assert outbound.channel == "telegram"
-    assert outbound.output_channel == "telegram"
-    assert outbound.content == "result"
+    assert result is not None
+    assert result["channel"] == "telegram"
+    assert result["output_channel"] == "telegram"
+    assert result["content"] == "result"
