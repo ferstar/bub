@@ -256,6 +256,24 @@ async def test_telegram_channel_send_extracts_json_message_and_skips_blank() -> 
 
 
 @pytest.mark.asyncio
+async def test_telegram_channel_send_splits_long_messages() -> None:
+    channel = TelegramChannel(lambda message: None)
+    sent: list[tuple[str, str]] = []
+
+    async def send_message(chat_id: str, text: str) -> None:
+        sent.append((chat_id, text))
+
+    channel._app = SimpleNamespace(bot=SimpleNamespace(send_message=send_message))
+
+    text = "a" * 5000
+    await channel.send(_message(text, chat_id="42"))
+
+    assert len(sent) == 2
+    assert sent[0] == ("42", "a" * 4096)
+    assert sent[1] == ("42", "a" * 904)
+
+
+@pytest.mark.asyncio
 async def test_telegram_channel_build_message_returns_command_directly() -> None:
     channel = TelegramChannel(lambda message: None)
     channel._parser = SimpleNamespace(parse=_async_return((",help", {"type": "text"})), get_reply=_async_return(None))

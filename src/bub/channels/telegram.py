@@ -36,6 +36,30 @@ class TelegramSettings(BaseSettings):
 
 
 NO_ACCESS_MESSAGE = "You are not allowed to chat with me. Please deploy your own instance of Bub."
+TELEGRAM_TEXT_LIMIT = 4096
+
+
+def _split_telegram_text(text: str, limit: int = TELEGRAM_TEXT_LIMIT) -> list[str]:
+    if len(text) <= limit:
+        return [text]
+
+    chunks: list[str] = []
+    start = 0
+    while start < len(text):
+        end = min(start + limit, len(text))
+        if end < len(text):
+            split_at = text.rfind("\n", start, end)
+            if split_at <= start:
+                split_at = text.rfind(" ", start, end)
+            if split_at > start:
+                end = split_at
+        chunk = text[start:end].strip()
+        if chunk:
+            chunks.append(chunk)
+        start = end
+        while start < len(text) and text[start].isspace():
+            start += 1
+    return chunks or [text[:limit]]
 
 
 def _message_type(message: Message) -> str:
@@ -204,7 +228,8 @@ class TelegramChannel(Channel):
             text = content
         if not text.strip():
             return
-        await self._app.bot.send_message(chat_id=chat_id, text=text)
+        for chunk in _split_telegram_text(text):
+            await self._app.bot.send_message(chat_id=chat_id, text=chunk)
 
     async def _on_start(self, update: Update, _context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None:
