@@ -239,3 +239,33 @@ def test_provide_tape_store_uses_agent_home_directory(tmp_path: Path) -> None:
 
     assert isinstance(store, FileTapeStore)
     assert store._directory == tmp_path / "tapes"
+
+
+def test_render_outbound_skips_telegram_fallback_when_channel_response_already_sent(tmp_path: Path) -> None:
+    _, impl, _ = _build_impl(tmp_path)
+
+    rendered = impl.render_outbound(
+        message={"channel": "telegram", "chat_id": "room", "output_channel": "null"},
+        session_id="session",
+        state={"_channel_response_sent": True},
+        model_output="result",
+    )
+
+    assert rendered == []
+
+
+def test_render_outbound_uses_telegram_fallback_when_no_channel_response_sent(tmp_path: Path) -> None:
+    _, impl, _ = _build_impl(tmp_path)
+
+    rendered = impl.render_outbound(
+        message={"channel": "telegram", "chat_id": "room", "output_channel": "null"},
+        session_id="session",
+        state={},
+        model_output="result",
+    )
+
+    assert len(rendered) == 1
+    outbound = rendered[0]
+    assert outbound.channel == "telegram"
+    assert outbound.output_channel == "telegram"
+    assert outbound.content == "result"

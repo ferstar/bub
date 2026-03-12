@@ -170,12 +170,24 @@ class BuiltinImpl:
         state: State,
         model_output: str,
     ) -> list[ChannelMessage]:
+        if not model_output:
+            return []
+
+        channel = field_of(message, "channel", "default")
+        output_channel = field_of(message, "output_channel", "default")
+
+        if channel == "telegram":
+            if state.get("_channel_response_sent"):
+                return []
+            if output_channel == "null":
+                output_channel = "telegram"
+
         outbound = ChannelMessage(
             session_id=session_id,
-            channel=field_of(message, "channel", "default"),
+            channel=channel,
             chat_id=field_of(message, "chat_id", "default"),
             content=model_output,
-            output_channel=field_of(message, "output_channel", "default"),
+            output_channel=output_channel,
             kind=field_of(message, "kind", "normal"),
         )
         return [outbound]
