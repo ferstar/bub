@@ -1,5 +1,6 @@
 import base64
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -194,7 +195,7 @@ class BuiltinImpl:
             if output_channel == "null":
                 if isinstance(outbound, dict):
                     return {**outbound, "output_channel": "telegram"}
-                return outbound.model_copy(update={"output_channel": "telegram"})
+                return replace(outbound, output_channel="telegram")
 
         return outbound
 

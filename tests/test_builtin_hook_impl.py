@@ -288,3 +288,26 @@ def test_apply_outbound_policy_uses_telegram_fallback_when_no_channel_response_s
     assert result["channel"] == "telegram"
     assert result["output_channel"] == "telegram"
     assert result["content"] == "result"
+
+
+def test_apply_outbound_policy_uses_telegram_fallback_for_channel_message(tmp_path: Path) -> None:
+    _, impl, _ = _build_impl(tmp_path)
+    outbound = ChannelMessage(
+        session_id="session",
+        channel="telegram",
+        chat_id="room",
+        content="result",
+        output_channel="null",
+    )
+
+    result = impl.apply_outbound_policy(
+        message={"channel": "telegram", "chat_id": "room", "output_channel": "null"},
+        session_id="session",
+        state={},
+        outbound=outbound,
+    )
+
+    assert isinstance(result, ChannelMessage)
+    assert result.output_channel == "telegram"
+    assert result.channel == "telegram"
+    assert result.content == "result"
