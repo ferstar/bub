@@ -195,6 +195,26 @@ async def test_on_error_dispatches_outbound_message(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_on_error_suppresses_generic_outbound_for_telegram_skill_flow(tmp_path: Path) -> None:
+    framework, impl, _ = _build_impl(tmp_path)
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    async def call_many(name: str, **kwargs: object) -> list[object]:
+        calls.append((name, kwargs))
+        return []
+
+    framework._hook_runtime.call_many = call_many  # type: ignore[method-assign]
+
+    await impl.on_error(
+        stage="turn",
+        error=RuntimeError("temporary: openai:gpt-5.4: LLM call failed after retries"),
+        message={"channel": "telegram", "chat_id": "room", "session_id": "telegram:room", "output_channel": "null"},
+    )
+
+    assert calls == []
+
+
+@pytest.mark.asyncio
 async def test_dispatch_outbound_uses_framework_router(tmp_path: Path) -> None:
     framework, impl, _ = _build_impl(tmp_path)
     dispatched: list[object] = []

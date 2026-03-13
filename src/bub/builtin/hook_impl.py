@@ -145,6 +145,20 @@ class BuiltinImpl:
     @hookimpl
     async def on_error(self, stage: str, error: Exception, message: Envelope | None) -> None:
         if message is not None:
+            # Telegram inbound messages intentionally use output_channel="null" so the
+            # agent must respond via the Telegram skill instead of the generic router.
+            # In that flow, a turn may already have sent a user-visible reply via the
+            # skill, and a later LLM retry failure during the same turn should not emit
+            # an extra generic error message back to the user.
+            if field_of(message, "channel") == "telegram" and field_of(message, "output_channel") == "null":
+                logger.warning(
+                    "session.run.error.suppressed channel=telegram stage={} session_id={} error={}",
+                    stage,
+                    field_of(message, "session_id", "unknown"),
+                    error,
+                )
+                return
+
             outbound = ChannelMessage(
                 session_id=field_of(message, "session_id", "unknown"),
                 channel=field_of(message, "channel", "default"),
