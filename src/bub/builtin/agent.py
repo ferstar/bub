@@ -150,7 +150,7 @@ class Agent:
                 )
                 raise
 
-            outcome = _resolve_tool_auto_result(output)
+            outcome = _resolve_tool_auto_result(output, state=tape.context.state)
             elapsed_ms = int((time.monotonic() - start) * 1000)
             if outcome.kind == "text":
                 await self.tapes.append_event(
@@ -254,10 +254,17 @@ class _ToolAutoOutcome:
     error: str = ""
 
 
-def _resolve_tool_auto_result(output: ToolAutoResult) -> _ToolAutoOutcome:
+def _resolve_tool_auto_result(output: ToolAutoResult, *, state: State | None = None) -> _ToolAutoOutcome:
     if output.kind == "text":
         return _ToolAutoOutcome(kind="text", text=output.text or "")
     if output.kind == "tools" or output.tool_calls or output.tool_results:
+        # Telegram inbound messages run with output_channel="null" and are expected to
+        # answer via the Telegram skill rather than the generic outbound renderer. Once
+        # tools have already executed in that flow (for example telegram_send.py sent the
+        # user-visible reply), forcing another "continue" step often causes an extra LLM
+        # round-trip and may end the turn with a duplicate error after the reply.
+        if state is not None and state.get("channel") == "telegram" and state.get("output_channel") == "null":
+            return _ToolAutoOutcome(kind="text", text="")
         return _ToolAutoOutcome(kind="continue")
     if output.error is None:
         return _ToolAutoOutcome(kind="error", error="tool_auto_error: unknown")

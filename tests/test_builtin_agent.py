@@ -10,7 +10,7 @@ import republic.auth.openai_codex as openai_codex
 from republic import ToolAutoResult
 
 import bub.builtin.agent as agent_module
-from bub.builtin.agent import Agent
+from bub.builtin.agent import Agent, _resolve_tool_auto_result
 from bub.builtin.settings import AgentSettings
 
 
@@ -160,3 +160,20 @@ async def test_agent_run_model_defaults_to_none() -> None:
     await agent.run(session_id="user/s1", prompt="hello", state={"_runtime_workspace": "/tmp"})  # noqa: S108
 
     assert fake_tapes.run_tools_model is None
+
+
+def test_resolve_tool_auto_result_continues_for_normal_tool_flow() -> None:
+    output = ToolAutoResult.tools_result(tool_calls=[{"id": "1"}], tool_results=["ok"])
+
+    outcome = _resolve_tool_auto_result(output, state={"channel": "cli", "output_channel": "cli"})
+
+    assert outcome.kind == "continue"
+
+
+def test_resolve_tool_auto_result_finishes_silently_for_telegram_skill_flow() -> None:
+    output = ToolAutoResult.tools_result(tool_calls=[{"id": "1"}], tool_results=["sent"])
+
+    outcome = _resolve_tool_auto_result(output, state={"channel": "telegram", "output_channel": "null"})
+
+    assert outcome.kind == "text"
+    assert outcome.text == ""
